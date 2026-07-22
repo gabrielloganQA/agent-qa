@@ -17,16 +17,46 @@
 
 ## Começando
 
+Este repositório é **template**. Cada QA clona e ele vira o projeto de QA daquele
+produto.
+
 ```bash
-cp -r qa-example testes-<sua-feature>
-cd testes-<sua-feature>
+git clone <url-do-kit> qa-wms
+cd qa-wms
+
+# o kit vira a fonte de ATUALIZAÇÃO, não o destino dos seus commits
+git remote rename origin kit
+git remote add origin <url-do-seu-repositorio>
+git push -u origin main
+
 claude
 ```
 
 ⚠️ **Abra o Claude dentro desta pasta.** Se abrir na pasta de cima, os comandos ficam
 escopados e não aparecem no `/`.
 
+Configure sua identidade antes do primeiro commit:
+
+```bash
+git config user.name "Seu Nome"
+git config user.email "voce@atlanteti.com"
+```
+
 Depois, digite `/qa-intake` e cole a documentação da sua feature. O resto ele conduz.
+
+### Recebendo correção do kit
+
+Você não perde seu trabalho: o `checkout` traz **só** as pastas da ferramenta.
+
+```bash
+git fetch kit --tags
+git checkout kit/v1.2.0 -- .claude/skills test/scripts docs templates .mcp.json
+echo "1.2.0" > VERSION
+git commit -am "chore: atualiza kit de v1.0.0 para v1.2.0"
+```
+
+`test/cases/`, `test/runs/`, `test/sessoes/` e `test/releases/` — o que é seu — não são
+tocados. Detalhe em [`docs/VERSIONAMENTO.md`](docs/VERSIONAMENTO.md).
 
 ### Pré-requisitos
 
