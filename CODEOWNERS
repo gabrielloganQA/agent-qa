@@ -1,0 +1,18 @@
+# Aprovação com força mecânica. O portão 2 (aprovação de cenário) só é real
+# se o merge exigir a assinatura de quem responde por ele.
+
+# Casos de teste — só QA aprova
+test/cases/**            @qa-leader @qa
+
+# O sistema em si — skill é código
+.claude/skills/**        @qa-leader
+test/scripts/**          @qa-leader @sdet
+docs/**                  @qa-leader
+
+# Automação
+test/api/**              @sdet @qa
+test/e2e/**              @sdet @qa
+test/support/**          @sdet
+
+# Parecer de release — assinatura nominal
+test/releases/**         @qa-leader

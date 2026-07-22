@@ -1,0 +1,19 @@
+# credenciais — nunca commitar
+.env
+.env.local
+
+# python
+__pycache__/
+*.pyc
+
+# artefatos temporarios
+*.log
+~$*
+.playwright-mcp/
+
+# relatorio gerado — a fonte e test/releases/*.md, o .docx e derivado
+test/Relatorio_de_Testes_*.docx
+
+# evidencia pesada: decida a politica de retencao antes de versionar video
+*.webm
+*.zip

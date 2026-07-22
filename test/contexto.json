@@ -1,0 +1,31 @@
+{
+  "_comentario": "Respostas do questionário de abertura (/qa-intake). Cada resposta LIBERA ou BLOQUEIA um tipo de teste. Preenchido na primeira conversa e consultado em todas as seguintes.",
+
+  "feature": null,
+  "aplicacao": null,
+  "versao": null,
+  "ambiente": null,
+  "executor": null,
+  "project_id_ap": null,
+
+  "permissoes": {
+    "acesso_banco": null,
+    "acesso_logs": null,
+    "teste_seguranca_autorizado": null,
+    "cadastrar_bug_no_ap": null
+  },
+
+  "contexto_tecnico": {
+    "contrato_api": null,
+    "tem_cache": null,
+    "tem_fila_assincrona": null,
+    "tem_retry": null,
+    "relatorio_cobertura": null
+  },
+
+  "_efeitos": {
+    "_": "Preenchido pelo /qa-intake com o efeito de cada resposta. Ex.: 'acesso_banco=false': 'NÃO sugerir validação em banco'."
+  },
+
+  "_pendencias_da_especificacao": []
+}
