@@ -28,9 +28,9 @@ jobs:
     name: Consistência dos casos
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -59,7 +59,7 @@ jobs:
 
       # Fica anexado ao run: serve para o PR, onde não há publicação. O caminho
       # de leitura do PO e do PMO é o site do job `paginas`.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: painel-qa
@@ -77,9 +77,9 @@ jobs:
     permissions:
       contents: write           # commita test/metricas/ de volta
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -133,11 +133,11 @@ jobs:
       name: github-pages
       url: ${{ steps.publicar.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: main             # pega o snapshot que o job anterior commitou
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -146,13 +146,13 @@ jobs:
           mkdir -p _site
           python3 test/scripts/qa_dashboard.py --saida _site/index.html
 
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
 
       - id: publicar
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
 
   # Descomente quando a suíte existir neste repositório. É o passo que fecha o
   # laço: a suíte determinística escreve o histórico oficial, sem ninguém
@@ -163,13 +163,13 @@ jobs:
   #   runs-on: ubuntu-latest
   #   needs: consistencia
   #   steps:
-  #     - uses: actions/checkout@v4
+  #     - uses: actions/checkout@v7
   #     - uses: actions/setup-node@v4
   #       with: { node-version: "20", cache: npm }
   #     - run: npm ci && npx playwright install --with-deps chromium
   #     - run: npx playwright test --reporter=junit --output-file=resultados.xml
   #       continue-on-error: true      # o gate é o ingest, não o runner
-  #     - uses: actions/setup-python@v5
+  #     - uses: actions/setup-python@v7
   #       with: { python-version: "3.11" }
   #     - name: Ingerir no histórico oficial
   #       run: |
