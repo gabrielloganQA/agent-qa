@@ -18,8 +18,8 @@ O que fica como [PLACEHOLDER] para o QA preencher:
   - nomes de QA Leader e PMO na aprovação
 
 Uso:
-    python3 tools/qa_report.py
-    python3 tools/qa_report.py --release "v1.2" --fase "Regressão" --build "#4471"
+    python3 test/scripts/qa_report.py
+    python3 test/scripts/qa_report.py --release "v1.2" --fase "Regressão" --build "#4471"
 """
 
 import argparse
@@ -34,7 +34,8 @@ import sys
 import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from qa_run import parse_features, load_runs, STATUS  # noqa: E402
+from qa_run import (parse_features, load_runs, consolida_rodada,  # noqa: E402
+                    numeros_de_rodada, STATUS)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 TEMPLATE = os.path.join(ROOT, "templates", "Relatorio_de_Testes_Atlante.docx")
@@ -150,7 +151,8 @@ def carrega_bugs():
     bugs = []
     for p in sorted(glob.glob(os.path.join(BUGS_DIR, "*.json"))):
         try:
-            b = json.load(open(p, encoding="utf-8"))
+            with open(p, encoding="utf-8") as fh:
+                b = json.load(fh)
         except Exception:
             continue
         b["_arquivo"] = os.path.basename(p)
@@ -161,11 +163,18 @@ def carrega_bugs():
 
 def contexto():
     p = os.path.join(ROOT, "test", "contexto.json")
-    return json.load(open(p, encoding="utf-8")) if os.path.exists(p) else {}
+    if not os.path.exists(p):
+        return {}
+    with open(p, encoding="utf-8") as fh:
+        return json.load(fh)
 
 
 def metricas(casos, runs):
-    ultima = runs[-1]
+    # a rodada e a UNIDADE, nao o arquivo: CI e QA escrevem em arquivos
+    # separados com o mesmo numero, e o parecer precisa dos dois. Ver
+    # qa_run.consolida_rodada -- ler runs[-1] anunciava "2/3 executados"
+    # num ciclo em que os 3 casos tinham rodado.
+    ultima = consolida_rodada(runs)
     res = ultima.get("resultados", {})
     planejado = len(casos)
     cont = {s: 0 for s in STATUS}
@@ -177,23 +186,85 @@ def metricas(casos, runs):
     taxa_aprov = aprovado / executado * 100 if executado else 0
     return dict(planejado=planejado, executado=executado, aprovado=aprovado,
                 reprovado=reprovado, bloqueado=bloqueado,
-                taxa_exec=taxa_exec, taxa_aprov=taxa_aprov, ciclos=len(runs))
+                taxa_exec=taxa_exec, taxa_aprov=taxa_aprov,
+                # ciclos = rodadas distintas. len(runs) contava DOIS para um
+                # ciclo que teve rodada de CI e rodada manual.
+                ciclos=len(numeros_de_rodada(runs)))
 
 
-def criterios_saida(m, bugs):
+def rns_definidas():
+    """{RN-XX} declaradas nos REGRAS.md de todas as features.
+
+    Mesma leitura do qa_lint: so conta RN em linha de tabela ou cabecalho --
+    mencao em prosa nao e declaracao de regra.
+    """
+    rns = set()
+    for p in glob.glob(os.path.join(ROOT, "test", "cases", "*", "REGRAS.md")):
+        with open(p, encoding="utf-8") as fh:
+            txt = fh.read()
+        rns |= set(re.findall(r"^\s*\|\s*\**(RN-\d+)\**\s*\|", txt, re.M))
+        rns |= set(re.findall(r"^#+\s*\**(RN-\d+)", txt, re.M))
+    return rns
+
+
+def criterios_saida(m, bugs, casos, res):
+    """Avalia os criterios de saida do parecer.
+
+    Cada linha mede uma coisa diferente. Antes, 'casos criticos executados' e
+    'cobertura de requisitos' eram os dois a mesma taxa de execucao geral --
+    numeros plausiveis medindo o que o nome nao diz, que e a pior especie de
+    metrica: ninguem desconfia dela.
+    """
     abertos = [b for b in bugs if b.get("status_bug", "aberto") == "aberto"]
     s1 = sum(1 for b in abertos if b["_sev"] == "S1")
     s2 = sum(1 for b in abertos if b["_sev"] == "S2")
-    cob = m["taxa_exec"]
+
+    # criticos = risco alto declarado na tag, nao "todos os casos"
+    criticos = [c for c, i in casos.items()
+                if "prioridade:alta" in i.get("tecnicas", [])]
+    crit_exec = sum(1 for c in criticos
+                    if res.get(c, {}).get("status") in ("passou", "falhou", "bloqueado"))
+    taxa_crit = crit_exec / len(criticos) * 100 if criticos else 0.0
+
+    # cobertura = RN com ao menos um CT, sobre as RN declaradas nos REGRAS.md
+    rns_req = rns_definidas()
+    rns_cobertas = {t for i in casos.values() for t in i.get("tecnicas", [])
+                    if t.startswith("RN-")}
+    cob = len(rns_req & rns_cobertas) / len(rns_req) * 100 if rns_req else 0.0
+
+    # conversao = automatizados sobre o total, excluindo nao-automatizar
+    elegiveis = [c for c, i in casos.items()
+                 if not i.get("automacao", "").startswith("nao-automatizar")]
+    feitos = sum(1 for c in elegiveis
+                 if casos[c].get("automacao", "").startswith("feito"))
+    conv = feitos / len(elegiveis) * 100 if elegiveis else 0.0
+
+    # falha sem defeito registrado. O relatorio contava defeito SO a partir de
+    # bugs/*.json: uma rodada com caso reprovado e nenhum bug cadastrado saía
+    # com "0 defeitos em aberto" no sumário executivo -- o primeiro número que o
+    # PMO lê. Falha sem bug não é ausência de defeito, é defeito que ninguém
+    # registrou. O qa_ingest e o qa_run já avisam no terminal; aqui vira critério.
+    sem_bug = sorted(c for c, i in res.items()
+                     if i.get("status") == "falhou" and not i.get("bug"))
+
     itens = [
-        ("Casos críticos executados", "100%", f"{m['taxa_exec']:.0f}%", m["taxa_exec"] >= 100),
+        ("Casos críticos executados", "100%",
+         f"{taxa_crit:.0f}% ({crit_exec}/{len(criticos)})" if criticos else "sem casos @prioridade:alta",
+         (taxa_crit >= 100) if criticos else None),
         ("Taxa de aprovação geral", "≥ 95%", f"{m['taxa_aprov']:.0f}%", m["taxa_aprov"] >= 95),
         ("Defeitos S1 em aberto", "0", str(s1), s1 == 0),
         ("Defeitos S2 em aberto", "≤ 2", str(s2), s2 <= 2),
-        ("Cobertura de requisitos", "≥ 90%", f"{cob:.0f}%", cob >= 90),
-        ("Regressão automatizada", "100%", PLACEHOLDER, None),
+        ("Cobertura de requisitos", "≥ 90%",
+         f"{cob:.0f}% ({len(rns_req & rns_cobertas)}/{len(rns_req)} RN)" if rns_req else "sem REGRAS.md",
+         (cob >= 90) if rns_req else None),
+        ("Regressão automatizada", "100%",
+         f"{conv:.0f}% ({feitos}/{len(elegiveis)})", conv >= 100),
+        # meta 0 e valor [N], no mesmo formato das linhas de S1/S2 -- a tabela
+        # do modelo tem uma linha por criterio, e a ordem daqui casa com a
+        # ordem dos rotulos de la. Ver TestCriteriosCasamComOModelo.
+        ("Falhas sem defeito registrado", "0", str(len(sem_bug)), not sem_bug),
     ]
-    return itens, s1, s2
+    return itens, s1, s2, sem_bug
 
 
 def recomendacao(itens, s1):
@@ -224,10 +295,11 @@ def gerar(args):
     if m["executado"] == 0:
         sys.exit("erro: nenhum caso foi executado ainda -- não há o que relatar.")
 
-    itens_crit, s1, s2 = criterios_saida(m, bugs)
+    ultima = consolida_rodada(runs)
+    itens_crit, s1, s2, sem_bug = criterios_saida(m, bugs, casos,
+                                                  ultima.get("resultados", {}))
     rec, falhos, _ = recomendacao(itens_crit, s1)
 
-    ultima = runs[-1]
     projeto = args.projeto or ultima.get("feature") or ctx.get("aplicacao") or PLACEHOLDER
     release = args.release or ultima.get("versao") or PLACEHOLDER
     fase = args.fase or "Funcional"
@@ -269,9 +341,14 @@ def gerar(args):
     def regra_sumario(txt, secao):
         t = txt.strip()
         if t.startswith("•Resultado —"):
+            # a ressalva das falhas sem bug vai NO MESMO parágrafo do número de
+            # defeitos: separá-las deixaria "0 defeitos em aberto" sozinho na
+            # linha que o PMO lê primeiro.
+            extra = (f", mais {len(sem_bug)} falha(s) sem defeito registrado"
+                     if sem_bug else "")
             return (f"•Resultado — {m['taxa_exec']:.0f}% dos casos executados, "
                     f"{m['taxa_aprov']:.0f}% de aprovação, {len(abertos)} defeitos em aberto "
-                    f"({por_sev['S1']} críticos).")
+                    f"({por_sev['S1']} críticos){extra}.")
         if t.startswith("•Critérios de saída —"):
             n_fail = len(falhos)
             estado = ("atendidos" if not n_fail else
@@ -418,6 +495,12 @@ def gerar(args):
           f"{m['taxa_aprov']:.0f}% aprovação | {len(abertos)} defeito(s) em aberto")
     if falhos:
         print("  criterios NAO atendidos: " + "; ".join(c[0] for c in falhos))
+    if sem_bug:
+        print(f"  ATENCAO: {len(sem_bug)} caso(s) reprovado(s) sem bug cadastrado: "
+              + ", ".join(sem_bug))
+        print("           o relatorio conta defeito por bugs/*.json — sem cadastro,")
+        print("           a falha nao aparece na tabela de defeitos do PMO.")
+        print("           abra com /qa-defeito e feche com rise_bug.py --rodada N")
     if sem_sev:
         print(f"  ATENCAO: {len(sem_sev)} defeito(s) sem severidade S1..S4 definida: "
               + ", ".join(b["_arquivo"] for b in sem_sev))

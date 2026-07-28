@@ -8,6 +8,13 @@ test/cases/**            @qa-leader @qa
 .claude/skills/**        @qa-leader
 test/scripts/**          @qa-leader @sdet
 docs/**                  @qa-leader
+CLAUDE.md                @qa-leader
+examples/**              @qa-leader
+
+# Os portões mecânicos. Mexer aqui é afrouxar trava — nunca sem o QA leader.
+.claude/hooks/**         @qa-leader
+.claude/settings.json    @qa-leader
+.github/workflows/**     @qa-leader @sdet
 
 # Automação
 test/api/**              @sdet @qa

@@ -83,10 +83,14 @@ Para cada bloqueio: por que não deu para testar.
 Grave em `test/runs/manual/AAAA-MM-DD-rodada-N.json` com `executado_por: "qa"`.
 
 ```bash
-python3 test/scripts/qa_run.py --init N --data AAAA-MM-DD --executor "Nome" \
+python3 test/scripts/qa_run.py --init N --manual --data AAAA-MM-DD --executor "Nome" \
   --feature "..." --versao "..." --ambiente "..."
 python3 test/scripts/qa_run.py --status
 ```
+
+`--manual` faz duas coisas: grava em `test/runs/manual/` em vez de `test/runs/`, e traz
+**só o que não está automatizado**. Caso com `@automacao:feito:<PR>` é responsabilidade
+do CI e fica de fora — o script lista quais excluiu. Sem a tag, assume `pendente`.
 
 > **`falhou` ≠ `bloqueado`.** Bloqueado não é culpa do produto — é impedimento.
 > Misturar os dois faz o relatório mentir sobre a qualidade da entrega.

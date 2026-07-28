@@ -100,19 +100,30 @@ Um bug pode ser S1 com prioridade Baixa (quebra feio num fluxo que ninguém usa)
 "Média"** — se o QA disser Média, avise e registre como Alta, com a observação no
 corpo do ticket.
 
-Se a severidade não for definida, o `rise_bug.py` recusa o arquivo. É proposital.
+⚠️ **Escreva a severidade começando pelo nível:** `"S2 — funcionalidade importante
+quebrada, com contorno"`. Sem o nível, a tabela da seção 4 do relatório sai
+zerada e o parecer subestima a gravidade.
+
+O `rise_bug.py` **aceita** texto solto (`"alta"`) e infere o nível pelo apelido —
+conveniência que veio da migração. Mas quando ele infere, **diz no preview**:
+`severidade .: alta   -> S2 INFERIDO do texto`. Confira: `S1` contra `S2` é a
+diferença entre interromper o ciclo e liberar a release, e essa é uma decisão
+sua, não do script. Declare o nível e não haverá o que conferir.
 
 ## 3. Cadastre
 
 ```bash
-python3 test/scripts/rise_bug.py --file bugs/ct-XXX-<slug>.json
+python3 test/scripts/rise_bug.py --file bugs/ct-XXX-<slug>.json --rodada N
 ```
 
 O script mostra o preview, pergunta o projeto (com lista real do AP) e pede
 confirmação antes de gravar. Colaboradores são preenchidos com todos os membros
 do projeto automaticamente.
 
-Anote o número retornado no campo `bug` da rodada em `test/runs/rodada-N.json`.
+`--rodada N` fecha o laço: grava o número retornado no campo `bug` do
+`caso_de_teste` dentro de `test/runs/rodada-N.json`. **Use sempre** — sem ele o
+defeito existe no AP, o caso está `falhou` na rodada, e nada liga os dois; o
+relatório não consegue dizer qual defeito reprovou qual caso.
 
 Se `contexto.json` tiver `cadastrar_bug_no_ap: false`, **não cadastre** — deixe o
 rascunho em `bugs/` e avise.

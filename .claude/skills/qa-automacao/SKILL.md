@@ -5,17 +5,19 @@ description: Escreve e revisa testes automatizados seguindo o contrato AtlanteX 
 
 # /qa-automacao — testes automatizados
 
-⚠️ **Processo delicado.** Três contratos governam este comando — leia antes de
-escrever a primeira linha:
+⚠️ **Processo delicado.** O essencial dos três contratos do time está **neste
+arquivo**: a regra zero (camada), as sete travas, a escrita e o checklist de PR.
+Os documentos completos são **consulta pontual, não leitura de partida**:
 
-| Documento | Responde |
+| Abra… | Só quando |
 |---|---|
-| [`docs/CONVENCOES-AUTOMACAO.md`](../../../docs/CONVENCOES-AUTOMACAO.md) | as convenções do time (pastas, runner, lint, nomes) |
-| [`docs/CAMADAS-E-AUTOMACAO.md`](../../../docs/CAMADAS-E-AUTOMACAO.md) | **onde** o cenário é provado |
-| [`docs/TESTE-LIMPO.md`](../../../docs/TESTE-LIMPO.md) | **como** o teste é escrito |
+| [`docs/CONVENCOES-AUTOMACAO.md`](../../../docs/CONVENCOES-AUTOMACAO.md) | for montar o projeto do zero, ou precisar divergir de pasta, nome ou runner |
+| [`references/camadas-e-automacao.md`](../design-casos-teste/references/camadas-e-automacao.md) | a camada do cenário não sair da tabela da regra zero, abaixo |
+| [`references/escrita-de-testes.md`](../design-casos-teste/references/escrita-de-testes.md) | precisar do porquê de uma das sete travas, ou de um exemplo longo |
 
-**PRs que ferirem estas regras voltam.** O que está aqui é o operacional; não substitui
-os documentos.
+**PRs que ferirem estas regras voltam** — mas abrir os três de saída custa cerca
+de 15 mil tokens e consome o orçamento da sessão antes da primeira linha de
+código. Abra o que a dúvida pedir, quando ela aparecer.
 
 ---
 
@@ -211,7 +213,7 @@ motivos para uma spec ficar vermelha, e só um deles você conserta:
 | Vermelho porque… | O que fazer |
 |---|---|
 | **A spec está errada** — seletor frágil, seed incompleto, assertion apontando para o campo errado, espera mal feita | Conserte a spec. É o único caso de "fazer passar". |
-| **O sistema está errado** | **É bug.** Não toque na assertion. Registre com `/qa-bug` e apresente a spec vermelha ao QA, explicando que ela documenta a regra correta. |
+| **O sistema está errado** | **É bug.** Não toque na assertion. Registre com `/qa-defeito` e apresente a spec vermelha ao QA, explicando que ela documenta a regra correta. |
 | **O ambiente está quebrado** — serviço fora, massa de referência ausente | Vermelho legítimo. Não mascare com skip. Reporte ao QA. |
 
 🚫 **Proibido virar verde afrouxando a intenção:** trocar `toBe(201)` por
@@ -220,6 +222,59 @@ adicionar `skip` ou `if`, aumentar timeout até "dar certo". Isso é fraude de t
 — viola a regra de ouro e a trava 2.
 
 Se você se pegar mexendo na assertion para o teste passar, **pare e pergunte ao QA**.
+
+**Isto não depende mais da sua disciplina.** O `qa_lint.py` lê o conteúdo da
+spec e reprova o PR:
+
+| Reprova | |
+|---|---|
+| `spec-sem-assercao-forte` | bloco cujas assertions são todas do tipo que passa com qualquer valor (`toBeTruthy`, `toBeDefined`, `toBeOK`, `assert x` nu) |
+| `spec-status-ambiguo` | `[200, 201]` e parentes |
+| `spec-desligada` | `.skip`/`xit`/`@pytest.mark.skip` num caso **aprovado**, ou `.only` em qualquer caso |
+
+| Avisa | |
+|---|---|
+| `spec-assercao-fraca` | assertion fraca ao lado de fortes — confira se não é ela que prova a RN |
+| `spec-espera-cega` | `waitForTimeout`, `time.sleep` |
+| `spec-timeout-alto` | timeout acima de 30s |
+
+Só vale para bloco que cita um `@CT-XXX` conhecido. Cenário travado por lacuna
+aberta está `@nao-aprovado` no `.feature` — nesse, `.skip` é aceito, porque o
+relatório já o conta como não coberto. Desligar a spec de um caso **aprovado**
+é o que o lint impede: ele some do relatório como se estivesse coberto.
+
+## A forma esperada
+
+```ts
+test.describe('RF-07 cupom no checkout — RN-01 valor mínimo', () => {
+  // BVA sobre o piso de R$ 50,00. Os três casos existem porque o defeito que
+  // esta regra costuma esconder é o ">" onde deveria haver ">=".
+
+  test('CT-002 aceita o cupom no valor exato do mínimo', async () => {
+    const pedido = await criarPedido({ total: 50.0 })
+    const r = await aplicarCupom(pedido, 'PROMO10')
+
+    expect(r.status()).toBe(200)
+    // 50,00 − 10% = 45,00. Da regra, não da resposta.
+    expect((await r.json()).total).toBe(45.0)
+  })
+})
+
+test.describe('RF-07 — RN-07 empate com promoção', () => {
+  // CT-011 está @nao-aprovado no .feature: a L-03 pergunta ao PO qual origem
+  // prevalece no empate, e ninguém respondeu. Desligar aqui é coerente porque
+  // o relatório já o conta como não coberto. Desligar um caso APROVADO é o que
+  // o lint impede.
+  test.skip('CT-011 mantém o cupom quando o desconto empata', async () => {
+    /* ... */
+  })
+})
+```
+
+Repare no que ela **não** faz: nenhum número colado da execução — cada valor
+esperado saiu da regra, e o comentário mostra a conta. Nenhuma asserção frouxa,
+nenhum status ambíguo, nenhuma espera pelo relógio. O `@CT-XXX` no título é o
+elo que sustenta a rastreabilidade caso ↔ spec ↔ bug ↔ relatório.
 
 ---
 

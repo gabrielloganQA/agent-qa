@@ -1,0 +1,188 @@
+# Portão mecânico do sistema de QA.
+#
+# O VERSIONAMENTO.md mandava "rodar o qa-lint no CI de cada projeto de teste" e
+# não entregava o arquivo que faz isso. Aqui está — o kit chega com o portão
+# ligado, em vez de com a recomendação de ligá-lo.
+#
+# Sem dependência: Python da imagem, biblioteca padrão, nada de pip install.
+
+name: QA
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  # Alimenta a série histórica sozinha. Antes, `--snapshot` só rodava se alguém
+  # lembrasse na auditoria semanal — e test/metricas/ ficou vazio desde a
+  # v1.1.0. Métrica sem série não responde "melhoramos?", só "como estamos".
+  schedule:
+    - cron: "0 11 * * 1-5"      # 08h de Brasília, dias úteis
+
+# Mínimo por padrão; cada job amplia só o que precisa.
+permissions:
+  contents: read
+
+jobs:
+  consistencia:
+    name: Consistência dos casos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Reprova: ID órfão, regra sem caso, tag faltando, @premissa sem
+      # @nao-aprovado, aprovação sem data, automação fantasma, teto de e2e
+      # estourado, requisito alterado sem revisão dos casos, e execução
+      # oficial gravada por agente.
+      #
+      # E, desde a v1.3.0, lê o CONTEÚDO da spec: bloco sem nenhuma asserção
+      # forte, dois status HTTP aceitos, teste desligado com o caso aprovado,
+      # `.only`. É a invariante 5 do CLAUDE.md virando mecanismo — até aqui os
+      # guarda-corpos paravam no Gherkin e a asserção passava livre.
+      - name: qa-lint (artefatos do projeto)
+        run: python3 test/scripts/qa_lint.py
+
+      # Valida o próprio kit: comando citado que não é skill, caminho para
+      # skill inexistente, script inexistente e link markdown quebrado.
+      - name: qa-lint --check-kit
+        run: python3 test/scripts/qa_lint.py --check-kit
+
+      - name: Testes do kit
+        run: python3 -m unittest discover -s test/scripts/tests -v
+
+      - name: Painel
+        run: python3 test/scripts/qa_dashboard.py --saida dashboard.html
+
+      # Fica anexado ao run: serve para o PR, onde não há publicação. O caminho
+      # de leitura do PO e do PMO é o site do job `paginas`.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: painel-qa
+          path: dashboard.html
+          retention-days: 30
+
+  # ------------------------------------------------------------------------- #
+  snapshot:
+    name: Snapshot das métricas
+    # Só no relógio ou sob demanda. Num push, gravar snapshot criaria uma
+    # entrada por commit e a série viraria ruído em vez de tendência.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: consistencia
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write           # commita test/metricas/ de volta
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Gravar a métrica do dia
+        run: python3 test/scripts/qa_dashboard.py --snapshot
+
+      # Push feito com o GITHUB_TOKEN não dispara workflow — não há laço.
+      - name: Commitar a série
+        run: |
+          if [ -z "$(git status --porcelain test/metricas)" ]; then
+            echo "métrica do dia já registrada; nada a commitar"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add test/metricas
+          git commit -m "chore: snapshot das métricas de $(date -u +%F)"
+          git push
+
+  # ------------------------------------------------------------------------- #
+  # Publicação do painel — o que o Qase dava como URL fixa.
+  #
+  # ⚠️ ATENÇÃO, LEIA ANTES DE HABILITAR O PAGES NO REPOSITÓRIO:
+  #
+  # Publicar Pages a partir de repositório privado exige plano pago, e restringir
+  # o SITE aos membros da organização só existe no Enterprise Cloud. Nos demais
+  # planos o site publicado é PÚBLICO — e este painel expõe nomes de feature,
+  # lacunas em aberto e contagem de defeitos.
+  #
+  # Confirme o plano em Settings → Pages antes do primeiro deploy. Para
+  # desligar a publicação sem mexer no resto, apague este job: o artefato do
+  # job acima continua entregando o mesmo arquivo.
+  paginas:
+    name: Publicar painel
+    needs: [consistencia, snapshot]
+    # `always()` porque `snapshot` é pulado em push, e job pulado bloquearia o
+    # dependente. A condição real é a consistência ter passado.
+    if: |
+      always()
+      && needs.consistencia.result == 'success'
+      && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.publicar.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main             # pega o snapshot que o job anterior commitou
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Gerar o painel
+        run: |
+          mkdir -p _site
+          python3 test/scripts/qa_dashboard.py --saida _site/index.html
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: publicar
+        uses: actions/deploy-pages@v4
+
+  # Descomente quando a suíte existir neste repositório. É o passo que fecha o
+  # laço: a suíte determinística escreve o histórico oficial, sem ninguém
+  # digitar resultado à mão.
+  #
+  # regressao:
+  #   name: Regressão
+  #   runs-on: ubuntu-latest
+  #   needs: consistencia
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-node@v4
+  #       with: { node-version: "20", cache: npm }
+  #     - run: npm ci && npx playwright install --with-deps chromium
+  #     - run: npx playwright test --reporter=junit --output-file=resultados.xml
+  #       continue-on-error: true      # o gate é o ingest, não o runner
+  #     - uses: actions/setup-python@v5
+  #       with: { python-version: "3.11" }
+  #     - name: Ingerir no histórico oficial
+  #       run: |
+  #         python3 test/scripts/qa_ingest.py \
+  #           --junit resultados.xml \
+  #           --rodada ${{ github.run_number }} \
+  #           --build "${{ github.sha }}" --criar
+  #     - name: Falhar se algum caso reprovou
+  #       run: |
+  #         python3 - <<'EOF'
+  #         import json, sys
+  #         d = json.load(open("test/runs/rodada-${{ github.run_number }}.json"))
+  #         ruins = [c for c, i in d["resultados"].items() if i["status"] == "falhou"]
+  #         if ruins:
+  #             sys.exit(f"casos reprovados: {', '.join(ruins)}")
+  #         EOF

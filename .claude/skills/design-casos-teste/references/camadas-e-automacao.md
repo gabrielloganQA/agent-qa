@@ -3,9 +3,9 @@
 Este arquivo responde a uma pergunta: **um cenário aprovado vira teste automatizado em
 qual camada, e sob quais regras?**
 
-- `.claude/skills/qa-casos/SKILL.md` → *o que* testar (técnicas de derivação)
+- `.claude/skills/design-casos-teste/SKILL.md` → *o que* testar (técnicas de derivação)
 - este arquivo → *onde* aquilo é provado
-- [`TESTE-LIMPO.md`](TESTE-LIMPO.md) → *como* o teste é escrito
+- [`escrita-de-testes.md`](escrita-de-testes.md) → *como* o teste é escrito
 
 **Escopo:** camadas executadas pelo QA/SDET, **todas contra o ambiente de QA**. O que roda
 dentro do pipeline do desenvolvedor, antes do deploy, não é tratado aqui.

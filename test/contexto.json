@@ -23,6 +23,14 @@
     "relatorio_cobertura": null
   },
 
+  "automacao": {
+    "framework_e2e": null,
+    "runner_api": null,
+    "performance": null,
+    "projeto": null,
+    "onde_moram": null
+  },
+
   "_efeitos": {
     "_": "Preenchido pelo /qa-intake com o efeito de cada resposta. Ex.: 'acesso_banco=false': 'NÃO sugerir validação em banco'."
   },

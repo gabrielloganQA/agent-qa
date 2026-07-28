@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Cadastra bugs na coluna "BUGs" do kanban do AP (Atlante Project), seguindo o
-modelo estrutural de QA. Ver docs/PROCESSO-QA-IA.md.
+modelo estrutural de QA. Ver docs/PADRAO-BUG-WMS.md.
 
 REGRA DO PROCESSO: nada e cadastrado sem confirmacao do QA. O padrao e mostrar
 o ticket montado e perguntar. Use --yes apenas quando o QA ja aprovou.
@@ -10,12 +10,15 @@ Usa os endpoints internos do AP (/tasks/save) porque o plugin REST API desta
 instalacao e somente leitura. Ver docs/PADRAO-BUG-WMS.md.
 
 Uso:
-    python3 rise_bug.py --file bugs/imagem-produto.json
-    python3 rise_bug.py --file bugs/*.json --yes
-    python3 rise_bug.py --template > bugs/novo.json
-    python3 rise_bug.py --delete 3496
+    python3 test/scripts/rise_bug.py --file bugs/imagem-produto.json
+    python3 test/scripts/rise_bug.py --file bugs/*.json --yes
+    python3 test/scripts/rise_bug.py --template > bugs/novo.json
+    python3 test/scripts/rise_bug.py --delete 3496
 
-Requer no .env: RISE_BASE_URL, RISE_USER, RISE_PASSWORD
+    # fecha o laco: grava o numero do bug no caso da rodada
+    python3 test/scripts/rise_bug.py --file bugs/ct-005.json --rodada 3
+
+Requer no .env DA RAIZ: RISE_BASE_URL, RISE_USER, RISE_PASSWORD
 """
 
 import argparse
@@ -29,6 +32,8 @@ import sys
 import urllib.parse
 import urllib.request
 from http.cookiejar import CookieJar
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # --- padrao do AP (ver docs/PADRAO-BUG-WMS.md) ---
 DEFAULT_PROJECT = 9    # WMS
@@ -48,6 +53,13 @@ PRIORITY_ALIASES = {
 }
 
 EVIDENCE_DIR = "test/image"
+
+# Severidade no padrao Atlante (S1..S4) -- eixo diferente da prioridade do AP.
+# Ver docs/GLOSSARIO.md secao 6.
+SEV_ALIAS = {"critico": "S1", "crítico": "S1", "critica": "S1", "crítica": "S1",
+             "alto": "S2", "alta": "S2", "medio": "S3", "médio": "S3",
+             "media": "S3", "média": "S3", "baixo": "S4", "baixa": "S4",
+             "bloqueada": "S1", "bloqueador": "S1"}
 
 
 class RiseError(RuntimeError):
@@ -79,8 +91,11 @@ TEMPLATE = {
         "dispositivo": "Dell G15 / Windows 11",
     },
     "anexos": ["bug-comprador.png"],
-    "severidade": "Média — funcionalidade utilizável, mas com perda de informação ao usuário.",
+    # o nivel S1..S4 e obrigatorio no inicio da string -- e o que alimenta a
+    # tabela de defeitos do relatorio do PMO. Ver docs/GLOSSARIO.md secao 6.
+    "severidade": "S3 — funcionalidade utilizável, mas com perda de informação ao usuário.",
     "prioridade": "Média",
+    "caso_de_teste": "CT-005",
     "impacto": "Impede o usuário de visualizar a imagem do produto, o que pode gerar "
                "desistência de compra e perda de receita.",
     "project_id": DEFAULT_PROJECT,
@@ -183,7 +198,16 @@ def render_preview(bug):
     orig = str(bug["prioridade"]).strip()
     mapped = PRIORITY_NAMES[prio_id]
     L.append(f"prioridade .: {mapped}" + (f"   [informada: {orig}]" if orig.lower() != mapped.lower() else ""))
-    L.append(f"severidade .: {bug['severidade']}")
+    # O nivel S1..S4 decide o criterio de saida "S1 em aberto = 0", que
+    # interrompe o ciclo. Quando ele veio de apelido ("alta" -> S2) em vez de
+    # ter sido declarado, o script escolheu por alguem -- e severidade e
+    # decisao do QA, nunca do script. Aparecer no preview e o minimo: o QA ve
+    # o que vai ser gravado antes de confirmar.
+    L.append(f"severidade .: {bug['severidade']}"
+             + ("" if nivel_declarado(bug)
+                else f"   -> {severidade_nivel(bug)} INFERIDO do texto "
+                     f"(o nivel nao foi declarado; escreva 'S2 — ...' "
+                     f"para decidir voce)"))
     L.append("-" * 72)
     L.append("Descrição do Problema")
     L.append(f"  {bug['descricao']}")
@@ -212,11 +236,44 @@ def render_preview(bug):
     return "\n".join(L)
 
 
+def nivel_declarado(bug):
+    """O QA escreveu 'S1'..'S4' explicitamente, ou o nivel foi inferido?
+
+    Existe porque a skill qa-defeito prometia que o script RECUSA severidade sem
+    nivel, e ele na verdade mapeia "alta" -> S2 em silencio. Mapear e util na
+    migracao; decidir calado nao e -- severidade e do QA, e S1 contra S2 e a
+    diferenca entre interromper o ciclo e liberar a release.
+    """
+    v = str(bug.get("severidade_nivel") or bug.get("severidade") or "")
+    return bool(re.search(r"\bS[1-4]\b", v, re.I))
+
+
+def severidade_nivel(bug):
+    """Extrai S1..S4 do campo severidade. None se nao for classificavel.
+
+    Mesma leitura do qa_report.py -- e o numero que alimenta a tabela da secao 4
+    do relatorio do PMO e o criterio de saida 'S1 em aberto = 0'.
+    """
+    v = str(bug.get("severidade_nivel") or bug.get("severidade") or "")
+    m = re.search(r"\bS([1-4])\b", v, re.I)
+    if m:
+        return "S" + m.group(1)
+    chave = v.strip().lower().split()[0].strip(":—-,.") if v.strip() else ""
+    return SEV_ALIAS.get(chave)
+
+
 def validate(bug):
     faltando = [f for f in REQUIRED if not bug.get(f)]
     if faltando:
         raise RiseError(f"campos obrigatorios ausentes: {', '.join(faltando)}")
     resolve_priority(bug["prioridade"])
+    # severidade sem nivel faz a tabela da secao 4 do relatorio sair zerada e o
+    # parecer subestimar a gravidade. Recusar aqui e proposital.
+    if not severidade_nivel(bug):
+        raise RiseError(
+            f"severidade '{bug['severidade']}' nao declara nivel S1..S4. "
+            f"Escreva 'S2 — <descricao>'. Sem isso o relatorio do PMO conta "
+            f"este defeito como sem gravidade.")
 
 
 # --------------------------------------------------------------------------- #
@@ -378,6 +435,36 @@ def resolve_collaborators(bug, project_id):
     return ",".join(ids)
 
 
+def anota_na_rodada(bug, task_id, numero_rodada):
+    """Grava o numero do bug no caso correspondente da rodada.
+
+    E o elo que sempre se perde quando o passo e manual: o defeito existe no AP,
+    o caso esta 'falhou' na rodada, e nada liga os dois -- entao o relatorio nao
+    consegue dizer QUAL defeito reprovou QUAL caso.
+    """
+    ct = bug.get("caso_de_teste")
+    if not (ct and task_id and numero_rodada):
+        return None
+    direto = os.path.join(ROOT, "test", "runs", f"rodada-{numero_rodada}.json")
+    achados = ([direto] if os.path.exists(direto) else sorted(glob.glob(
+        os.path.join(ROOT, "test", "runs", "manual", f"*rodada-{numero_rodada}.json"))))
+    if not achados:
+        print(f"   [aviso] rodada {numero_rodada} nao encontrada em test/runs/")
+        return None
+    caminho = achados[0]
+    with open(caminho, encoding="utf-8") as fh:
+        run = json.load(fh)
+    caso = (run.get("resultados") or {}).get(ct)
+    if caso is None:
+        print(f"   [aviso] {ct} nao esta na rodada {numero_rodada}")
+        return None
+    caso["bug"] = int(task_id)
+    with open(caminho, "w", encoding="utf-8") as fh:
+        json.dump(run, fh, indent=2, ensure_ascii=False)
+    print(f"   {ct} da rodada {numero_rodada} agora aponta para o bug #{task_id}")
+    return caminho
+
+
 def ask_project(default_id):
     """Pergunta em qual projeto o bug sera aberto. Enter aceita o default."""
     projects = list_projects()
@@ -409,14 +496,23 @@ def ask_project(default_id):
 
 
 def load_env(path=".env"):
-    full = os.path.join(os.path.dirname(os.path.abspath(__file__)), path)
-    if not os.path.exists(full):
-        return
-    for line in open(full, encoding="utf-8"):
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, v = line.split("=", 1)
-            os.environ.setdefault(k.strip(), v.strip())
+    """Le o .env da RAIZ do repositorio (onde o README manda cria-lo).
+
+    Antes procurava ao lado do script, em test/scripts/.env -- que ninguem cria.
+    O resultado era 'faltando no .env: RISE_USER, RISE_PASSWORD' com o arquivo
+    preenchido na raiz. Mantem o cwd como segundo lugar, para quem roda de fora.
+    """
+    candidatos = [os.path.join(ROOT, path), os.path.join(os.getcwd(), path)]
+    for full in candidatos:
+        if not os.path.exists(full):
+            continue
+        for line in open(full, encoding="utf-8"):
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+        return full
+    return None
 
 
 def main():
@@ -428,6 +524,9 @@ def main():
                     help="pula a confirmacao (use so quando o QA ja aprovou)")
     ap.add_argument("--dry-run", action="store_true", help="so mostra, nunca cadastra")
     ap.add_argument("--delete", type=int, metavar="ID", help="remove uma task pelo id")
+    ap.add_argument("--rodada", metavar="N",
+                    help="apos cadastrar, grava o numero do bug no campo 'bug' do "
+                         "caso_de_teste dentro de test/runs/rodada-N.json")
     args = ap.parse_args()
 
     if args.template:
@@ -484,6 +583,8 @@ def main():
             criados.append(tid)
             print(f">> cadastrado: #{tid}  {base}/projects/view/"
                   f"{b.get('project_id', DEFAULT_PROJECT)}")
+            if args.rodada:
+                anota_na_rodada(b, tid, args.rodada)
 
         if criados:
             print(f"\n{len(criados)} bug(s) cadastrado(s): "

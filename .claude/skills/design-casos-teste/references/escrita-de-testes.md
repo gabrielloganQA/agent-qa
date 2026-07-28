@@ -2,11 +2,11 @@
 
 Três arquivos, três perguntas:
 
-- `.claude/skills/qa-casos/SKILL.md` → **o que** testar (técnicas de derivação)
-- `docs/CAMADAS-E-AUTOMACAO.md` → **onde** o cenário é provado
+- `.claude/skills/design-casos-teste/SKILL.md` → **o que** testar (técnicas de derivação)
+- [`camadas-e-automacao.md`](camadas-e-automacao.md) → **onde** o cenário é provado
 - este arquivo → **como** o teste é escrito
 
-As convenções internas do time ([`CONVENCOES-AUTOMACAO.md`](CONVENCOES-AUTOMACAO.md):
+As convenções internas do time ([`docs/CONVENCOES-AUTOMACAO.md`](../../../../docs/CONVENCOES-AUTOMACAO.md):
 caminhos, runner, lint, nomes de pasta) continuam sendo a fonte da verdade. Aqui está o
 princípio por trás de cada regra, o catálogo de defeitos de escrita que a revisão de PR
 precisa pegar, e os checklists que permitem reprovar um PR sem discussão de gosto pessoal.

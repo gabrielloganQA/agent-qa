@@ -45,8 +45,11 @@ ninguém recebe. Em três meses existem dez versões divergentes e nenhuma é a 
 
 | | Muda com que frequência | De quem é |
 |---|---|---|
-| **Ferramenta** — `.claude/skills/`, `test/scripts/`, `docs/`, `templates/` | raramente, e para todos ao mesmo tempo | do time |
-| **Artefatos** — `test/cases/`, `runs/`, `sessoes/`, `releases/`, `bugs/` | toda semana, e só naquele projeto | do QA daquela feature |
+| **Ferramenta** — `.claude/` (skills, hooks, prompts, settings.json), `test/scripts/`, `docs/`, `templates/`, `.github/`, `CLAUDE.md` | raramente, e para todos ao mesmo tempo | do time |
+| **Artefatos** — `test/cases/`, `runs/`, `sessoes/`, `metricas/`, `releases/`, `bugs/` | toda semana, e só naquele projeto | do QA daquela feature |
+
+⚠️ `.claude/settings.local.json` **não** é da ferramenta: é a preferência pessoal
+de cada QA (quais MCPs aprovou). Nunca entre nele no `checkout` de atualização.
 
 O projeto do QA é um repositório próprio. A ferramenta vem de fora, por caminho
 explícito:
@@ -57,9 +60,18 @@ git remote add kit <url-do-repositorio-do-kit>
 
 # quando quiser atualizar a ferramenta
 git fetch kit --tags
-git checkout kit/v1.2.0 -- .claude/skills test/scripts docs templates .mcp.json
-git commit -m "chore: atualiza kit de v1.0.0 para v1.2.0"
+git checkout kit/v1.2.0 -- \
+  .claude/skills .claude/hooks .claude/settings.json .claude/prompts \
+  test/scripts docs templates .github CLAUDE.md .mcp.json
+git commit -m "chore: atualiza kit de v1.1.0 para v1.2.0"
 echo "1.2.0" > VERSION
+```
+
+Depois de atualizar, confirme que o kit chegou íntegro:
+
+```bash
+python3 test/scripts/qa_lint.py --check-kit
+python3 -m unittest discover -s test/scripts/tests
 ```
 
 O `checkout -- <caminhos>` traz **só** as pastas da ferramenta. `test/cases/`,
@@ -89,9 +101,13 @@ morreu.
 `@camada:` passa a ser obrigatória em todo cenário.
 
 Para migrar:
-  python3 test/scripts/qa_migrar.py --de 1.x --para 2.0
+  <o comando de migração acompanha a versão, nesta seção>
 Depois rode o lint e revise o que ele apontar.
 ```
+
+O script de migração é escrito junto com a mudança MAIOR e entra no mesmo PR.
+Não existe um migrador genérico — cada mudança de convenção quebra uma coisa
+diferente.
 
 ---
 

@@ -9,12 +9,17 @@ Tudo abaixo foi verificado contra a instalação real, criando e removendo tasks
 > (`/tasks/save`), autenticando por sessão — não pela REST API do plugin, que
 > nesta instalação é somente leitura.
 >
-> Script pronto: [`rise_bug.py`](../rise_bug.py)
+> Script pronto: [`test/scripts/rise_bug.py`](../test/scripts/rise_bug.py)
 >
 > ```bash
-> python3 rise_bug.py "Título do bug" "<p>Descrição</p>" --priority 3
-> # → bug criado: #3495  projeto=9  coluna=BUGs  prioridade=Critica
+> python3 test/scripts/rise_bug.py --file bugs/ct-005-imagem.json --rodada 3
+> # → cadastrado: #3495  projeto=9  coluna=BUGs  prioridade=Critica
+> # → CT-005 da rodada 3 agora aponta para o bug #3495
 > ```
+>
+> O bug **entra por arquivo JSON**, nunca por argumento solto de linha de
+> comando: o modelo estrutural tem nove seções, e passá-las como strings no
+> shell não sobrevive à primeira revisão.
 
 ---
 
@@ -95,7 +100,7 @@ X-Requested-With: XMLHttpRequest
 
 | Campo | Valor no padrão | Nota |
 |---|---|---|
-| `title` | `BUG - <resumo>` | prefixo automático no script |
+| `title` | `Bug:[<escopo>] <resumo>` | montado pelo script a partir de `escopo` e `resumo` |
 | `description` | — | aceita HTML |
 | `project_id` | `9` | WMS |
 | `status_id` | **`5`** | coluna **BUGs** |
@@ -172,8 +177,8 @@ BUG — Cliente em uso pode ser inativado, fornecedor em uso não
 MELHORIA DE UX — Prevenir perda de dados ao utilizar BACK em modais
 ```
 
-Prefixo em CAIXA ALTA + separador + descrição. O script aplica `BUG - ` (hífen
-ASCII — ver armadilha 4.5).
+Prefixo + separador + descrição. O script monta `Bug:[<escopo>] <resumo>`, sempre
+com **hífen ASCII** no corpo — ver armadilha 4.5.
 
 ---
 
@@ -221,21 +226,30 @@ redirect para `/signin`.
 ## 5. Uso do script
 
 ```bash
-# criar
-python3 rise_bug.py "Título do bug" "<p>Passos, esperado vs obtido</p>"
+# modelo do JSON, para começar um rascunho
+python3 test/scripts/rise_bug.py --template > bugs/ct-005-imagem.json
 
-# outro projeto / prioridade / responsável
-python3 rise_bug.py "Título" "Desc" --project 31 --priority 3 --assign 17
+# conferir sem cadastrar
+python3 test/scripts/rise_bug.py --file bugs/ct-005-imagem.json --dry-run
+
+# cadastrar (pergunta o projeto e pede confirmação) e anotar na rodada 3
+python3 test/scripts/rise_bug.py --file bugs/ct-005-imagem.json --rodada 3
+
+# vários de uma vez, quando o QA já aprovou todos
+python3 test/scripts/rise_bug.py --file "bugs/*.json" --yes
 
 # remover
-python3 rise_bug.py --delete 3495
+python3 test/scripts/rise_bug.py --delete 3495
 ```
 
-Requer no `.env`:
+O projeto e o responsável vêm do próprio JSON (`project_id`, `assigned_to`); a
+prioridade vem do campo `prioridade` e é normalizada para os quatro ids do AP.
+
+Requer no `.env` **da raiz do repositório** (ver `.env.example`):
 
 ```
 RISE_BASE_URL=https://ap.atlantex.com.br/index.php
-RISE_USER=<email>
+RISE_USER=<email do usuário de serviço>
 RISE_PASSWORD=<senha>
 RISE_AUTH_TOKEN=<token>    # opcional, só para leitura via REST API
 ```
@@ -254,5 +268,7 @@ RISE_AUTH_TOKEN=<token>    # opcional, só para leitura via REST API
 
 ## Anexo
 
-Referência das 216 rotas documentadas pelo fabricante (≠ do que está instalado):
-[`RISE_CRM_API_endpoints.md`](./RISE_CRM_API_endpoints.md)
+O inventário das 216 rotas documentadas pelo fabricante (≠ das 23 instaladas) foi
+levantado em 21/07/2026 e **não está versionado aqui** — é documentação do
+fornecedor, não contrato do time. O que importa deste levantamento está na seção 1:
+das 216, esta instalação expõe 23, todas `GET`.

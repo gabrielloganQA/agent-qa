@@ -8,10 +8,14 @@ Com isso da para responder "rodada 1 falhou X, rodada 2 passou tudo" sem
 depender de ferramenta externa -- e o historico fica versionado no git.
 
 Uso:
-    python3 tools/qa_run.py --init 1                 cria a rodada 1 em branco
-    python3 tools/qa_run.py --status                 matriz de todas as rodadas
-    python3 tools/qa_run.py --status --rodada 2      detalhe de uma rodada
-    python3 tools/qa_run.py --check                  valida IDs e duplicatas
+    python3 test/scripts/qa_run.py --init 1              cria a rodada 1 em branco
+    python3 test/scripts/qa_run.py --executar 1          percorre os casos perguntando
+    python3 test/scripts/qa_run.py --status              matriz de todas as rodadas
+    python3 test/scripts/qa_run.py --status --rodada 2   detalhe de uma rodada
+    python3 test/scripts/qa_run.py --check               valida IDs e duplicatas
+
+Resultado de suite automatizada NAO entra por aqui: use qa_ingest.py, que le o
+JUnit XML do runner e grava com executado_por: ci.
 
 Status possiveis de um caso:
     passou | falhou | bloqueado | nao_executado | nao_aplicavel
@@ -53,29 +57,124 @@ def parse_features():
                          r"|Scenario Outline)\s*:\s*(.+)$", s)
             if m and pendente:
                 cid, tecnicas = pendente
-                # @auto = o Claude executa | @manual = o QA executa
-                # sem marcacao explicita, assume manual (mais conservador:
-                # ninguem passa por automatico sem alguem ter decidido isso)
-                modo = "auto" if "auto" in tecnicas else "manual"
+                # Estado de automacao, vocabulario do camadas-e-automacao.md §2:
+                #   @automacao:pendente | @automacao:feito:<PR> |
+                #   @automacao:nao-automatizar:<motivo>
+                # Sem tag explicita assume 'pendente' — ninguem entra na suite
+                # automatizada sem alguem ter declarado que automatizou.
+                automacao = next(
+                    (t.split(":", 1)[1] for t in tecnicas
+                     if t.startswith("automacao:")), "pendente")
+                # so 'feito' sai da rodada manual: pendente e nao-automatizar
+                # continuam sendo executados a mao. '@auto' solto ainda vale,
+                # por compatibilidade com features antigas.
+                automatizado = automacao.startswith("feito") or "auto" in tecnicas
                 casos[cid] = {
                     "titulo": m.group(2).strip(),
                     "arquivo": os.path.relpath(path, ROOT).replace("\\", "/"),
                     "tecnicas": tecnicas,
-                    "modo": modo,
+                    "modo": "auto" if automatizado else "manual",
+                    "automacao": automacao,
+                    # portao 2: so quem tem @aprovado-por: entra em rodada
+                    # oficial. Ausencia da tag e o estado padrao -- nada nasce
+                    # aprovado.
+                    "aprovado": any(t.startswith("aprovado-por:")
+                                    for t in tecnicas),
                 }
                 pendente = None
     return casos
 
 
 def load_runs():
-    """Le test/runs/*.json ordenado por numero da rodada."""
+    """Le test/runs/**/*.json ordenado por numero da rodada.
+
+    Recursivo de proposito: runs/*.json e execucao de CI e runs/manual/*.json e
+    rodada manual do QA (ver test/runs/README.md e qa-manual/SKILL.md §4). O glob
+    nao-recursivo enxergava so o primeiro, entao toda rodada manual ficava invisivel
+    para --status e para o relatorio do PMO, que importa esta funcao.
+    """
     runs = []
-    for path in glob.glob(os.path.join(RUNS_DIR, "*.json")):
+    for path in glob.glob(os.path.join(RUNS_DIR, "**", "*.json"), recursive=True):
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
-        data["_arquivo"] = os.path.basename(path)
+        data["_arquivo"] = os.path.relpath(path, RUNS_DIR)
         runs.append(data)
     return sorted(runs, key=lambda r: int(r.get("rodada", 0)))
+
+
+def _peso(info):
+    """Precedencia ao fundir a MESMA rodada. Maior vence.
+
+    'qa' vence 'ci' por decisao do time: a pessoa reexecuta um caso justamente
+    quando desconfia do verde da suite, e e ela quem assina o parecer.
+
+    Entre dois resultados do mesmo dono, um status de verdade vence
+    'nao_executado' -- a rodada nasce com todos os casos em nao_executado, e
+    esse placeholder nao pode apagar um resultado real vindo do outro arquivo.
+    """
+    info = info or {}
+    return (1 if info.get("executado_por") == "qa" else 0,
+            0 if info.get("status", "nao_executado") == "nao_executado" else 1)
+
+
+def consolida_rodada(runs, numero=None):
+    """Funde os arquivos da MESMA rodada num unico conjunto de resultados.
+
+    Uma rodada tem dois donos e dois arquivos: runs/rodada-N.json (CI, escrito
+    pelo qa_ingest) e runs/manual/<data>-rodada-N.json (QA, escrito pelo
+    --executar). Separar a ESCRITA e o que impede o agente de tocar no historico
+    oficial -- isso fica. Mas quem LE precisa enxergar o ciclo inteiro.
+
+    Sem esta funcao o relatorio lia `runs[-1]`, ou seja, UM dos dois arquivos:
+    num ciclo em que o CI rodou 1 caso e o QA rodou 2, ele anunciava
+    "2/3 executados" com os 3 executados. A metade que estava no outro arquivo
+    simplesmente nao existia para o PMO.
+
+    Devolve None se nao houver rodada. `_arquivos` lista o que entrou na fusao.
+    """
+    if not runs:
+        return None
+    alvo = int(numero) if numero is not None else max(
+        int(r.get("rodada", 0)) for r in runs)
+    do_numero = sorted((r for r in runs if int(r.get("rodada", 0)) == alvo),
+                       key=lambda r: r.get("_arquivo", ""))
+    if not do_numero:
+        return None
+
+    # base dos metadados: o arquivo do CI quando existe -- e ele que carrega
+    # build e versao vindos do pipeline.
+    base = next((r for r in do_numero
+                 if "manual" not in (r.get("_arquivo") or "")), do_numero[0])
+    fundido = dict(base)
+    fundido["_arquivos"] = [r.get("_arquivo") for r in do_numero]
+
+    resultados = {}
+    for r in do_numero:
+        for cid, info in (r.get("resultados") or {}).items():
+            if cid not in resultados or _peso(info) > _peso(resultados[cid]):
+                resultados[cid] = info
+    fundido["resultados"] = resultados
+    # a data que importa para o parecer e a da execucao mais recente
+    fundido["data"] = max((r.get("data") or "") for r in do_numero) or base.get("data", "")
+    return fundido
+
+
+def numeros_de_rodada(runs):
+    """Quantos CICLOS existem, não quantos arquivos.
+
+    Dois arquivos da mesma rodada são um ciclo só — `len(runs)` contava dois.
+    """
+    return sorted({int(r.get("rodada", 0)) for r in runs})
+
+
+def caminho_rodada(numero):
+    """Acha a rodada N em runs/ (CI) ou runs/manual/ (QA). None se nao existir."""
+    direto = os.path.join(RUNS_DIR, f"rodada-{numero}.json")
+    if os.path.exists(direto):
+        return direto
+    achados = sorted(glob.glob(
+        os.path.join(RUNS_DIR, "manual", f"*rodada-{numero}.json")))
+    return achados[0] if achados else None
 
 
 def cmd_init(numero, args):
@@ -83,7 +182,44 @@ def cmd_init(numero, args):
     if not casos:
         sys.exit(f"erro: nenhum caso encontrado em {CASES_DIR} "
                  f"(cenarios precisam da tag @CT-XXX)")
-    destino = os.path.join(RUNS_DIR, f"rodada-{numero}.json")
+    # PORTAO 2, no limite da execucao.
+    #
+    # O PROCESSO.md promete que "@nao-aprovado fica fora da suite oficial" e
+    # atribui isso a "hook + lint". Nenhum dos dois cobria ESTE ponto: --init
+    # montava a rodada com parse_features() inteiro, e cenario @premissa
+    # @nao-aprovado -- comportamento SUPOSTO, esperando o PO -- podia ser
+    # marcado 'passou'. O lint passava limpo, o painel contava como coberto e o
+    # relatorio do PMO anunciava aprovacao. Suposicao virava cobertura, que e
+    # exatamente o que este kit existe para impedir.
+    nao_aprovados = [c for c, i in casos.items() if not i.get("aprovado")]
+    if nao_aprovados:
+        casos = OrderedDict((c, i) for c, i in casos.items() if i.get("aprovado"))
+        print(f"fora da rodada ({len(nao_aprovados)} sem @aprovado-por:): "
+              f"{', '.join(nao_aprovados)}")
+        if not casos:
+            sys.exit("erro: nenhum caso aprovado. Rodada oficial so aceita cenario "
+                     "que passou pelo portao 2 — o QA troca @nao-aprovado por "
+                     "@aprovado-por:<usuario> @data:<AAAA-MM-DD> no editor dele.\n"
+                     "       Cenario travado por lacuna continua fora ate o PO "
+                     "responder: e o portao funcionando, nao um impedimento.")
+
+    if getattr(args, "manual", False):
+        # rodada do QA: so o que nao esta automatizado. Caso com
+        # @automacao:feito:<PR> e responsabilidade do CI, nao da mao do QA.
+        automatizados = [c for c, i in casos.items() if i["modo"] == "auto"]
+        casos = OrderedDict((c, i) for c, i in casos.items()
+                            if i["modo"] == "manual")
+        if not casos:
+            sys.exit("erro: nenhum caso manual — todos estao @automacao:feito. "
+                     "Rodada manual nao faz sentido; use a suite automatizada.")
+        if automatizados:
+            print(f"fora da rodada manual ({len(automatizados)} automatizados): "
+                  f"{', '.join(automatizados)}")
+        # convencao do test/runs/README.md: rodada do QA vive em runs/manual/
+        destino = os.path.join(RUNS_DIR, "manual",
+                               f"{args.data or 'sem-data'}-rodada-{numero}.json")
+    else:
+        destino = os.path.join(RUNS_DIR, f"rodada-{numero}.json")
     if os.path.exists(destino) and not args.force:
         sys.exit(f"erro: {destino} ja existe (use --force para sobrescrever)")
 
@@ -103,7 +239,7 @@ def cmd_init(numero, args):
             item["rodada_anterior"] = ant
         resultados[cid] = item
 
-    os.makedirs(RUNS_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(destino), exist_ok=True)
     with open(destino, "w", encoding="utf-8") as fh:
         json.dump({
             "rodada": int(numero),
@@ -132,8 +268,8 @@ def _pergunta(texto, default=""):
 
 def cmd_executar(numero):
     """Percorre os casos perguntando o resultado. E assim que o QA registra."""
-    caminho = os.path.join(RUNS_DIR, f"rodada-{numero}.json")
-    if not os.path.exists(caminho):
+    caminho = caminho_rodada(numero)
+    if not caminho:
         sys.exit(f"erro: rodada {numero} nao existe (crie com --init {numero})")
     with open(caminho, encoding="utf-8") as fh:
         run = json.load(fh)
@@ -146,7 +282,22 @@ def cmd_executar(numero):
           "[x] nao aplicavel  [s]air e salvar")
     print("Enter mantem o status atual.\n")
 
-    for cid, info in casos.items():
+    # percorre os casos DA RODADA, nao todos os do repositorio. O --init --manual
+    # filtra os @automacao:feito de proposito -- o CI e dono deles. Refazer
+    # parse_features() aqui reinseria justamente esses, e o QA terminava
+    # clicando caso a caso em cenario que a suite ja rodou: o filtro existia
+    # na criacao da rodada e se desfazia na execucao dela.
+    alvo = list(resultados) or list(casos)
+    fora = [c for c in casos if c not in alvo]
+    if fora:
+        print(f"fora desta rodada ({len(fora)}): {', '.join(fora)}\n")
+
+    for cid in alvo:
+        info = casos.get(cid)
+        if info is None:
+            print(f"   (pulado) {cid} está na rodada mas não existe "
+                  f"em nenhum .feature — corrija o .feature ou a rodada")
+            continue
         atual = resultados.setdefault(cid, {"status": "nao_executado",
                                             "titulo": info["titulo"]})
         st_atual = atual.get("status", "nao_executado")
@@ -170,6 +321,9 @@ def cmd_executar(numero):
             if t in TECLAS:
                 atual["status"] = TECLAS[t]
                 atual["titulo"] = info["titulo"]
+                # quem esta respondendo e a pessoa, nao o script: e o unico
+                # valor legitimo aqui. 'ci' so entra pelo qa_ingest.py.
+                atual["executado_por"] = "qa"
                 break
             print("   opcao invalida. use p / f / b / n / x / s")
 
@@ -201,7 +355,8 @@ def cmd_executar(numero):
     if pend:
         print(f"\nATENCAO: {len(pend)} caso(s) com falha sem bug cadastrado no AP: "
               + ", ".join(pend))
-        print("   cadastre com: python3 tools/rise_bug.py --file bugs/<arquivo>.json")
+        print("   cadastre com: python3 test/scripts/rise_bug.py "
+              "--file bugs/<arquivo>.json")
     print(f"\nsalvo em {os.path.relpath(caminho, ROOT)}")
 
 
@@ -291,10 +446,10 @@ def cmd_status(rodada=None):
     # so o que a maquina rodou nunca passou por olho humano -- o PMO precisa saber
     so_maquina = [cid for cid in casos
                   if all((run.get("resultados", {}).get(cid, {}) or {}).get("executado_por")
-                         in (None, "claude")
+                         in (None, "ci")
                          for run in runs)
                   and any((run.get("resultados", {}).get(cid, {}) or {}).get("executado_por")
-                          == "claude" for run in runs)]
+                          == "ci" for run in runs)]
     if so_maquina:
         print(f"nota: {len(so_maquina)} caso(s) executado(s) somente por automacao, "
               f"sem verificacao humana: " + ", ".join(so_maquina))
@@ -325,6 +480,8 @@ def main():
     ap.add_argument("--check", action="store_true", help="valida IDs e status")
     ap.add_argument("--rodada", metavar="N", help="detalha uma rodada")
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--manual", action="store_true",
+                    help="rodada do QA: grava em test/runs/manual/ em vez de test/runs/")
     ap.add_argument("--data", help="data da rodada (AAAA-MM-DD)")
     ap.add_argument("--executor", help="quem executou")
     ap.add_argument("--feature", help="nome da feature testada")
@@ -334,6 +491,8 @@ def main():
 
     if args.init:
         cmd_init(args.init, args)
+    elif args.executar:
+        cmd_executar(args.executar)
     elif args.check:
         cmd_check()
     elif args.status or args.rodada:

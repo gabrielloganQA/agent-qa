@@ -5,9 +5,17 @@ description: Define em qual camada cada cenário aprovado será provado — api,
 
 # qa-roteamento — onde cada cenário é provado
 
-Entrada: cenários com `@aprovado-por:`.
+Entrada: cenários derivados pelo `/design-casos-teste`, aprovados ou não.
 Saída: `@camada:` e `@suite:` na `MATRIZ.md` e no `.feature`.
 Portão: QA confirma; o `qa-lint` valida o teto de E2E.
+
+> **Por que a entrada não exige `@aprovado-por:`.** O `qa_lint` cobra `@camada:`
+> e `@suite:` de **todo** cenário, então a camada tem de existir antes da
+> aprovação — o `/design-casos-teste` já atribui uma no passo 2. Este comando
+> **revisa e confirma** esse roteamento, e é o lugar certo para reclassificar
+> quando o percentual de E2E estourar. Rodar antes ou depois do portão 2 é
+> escolha do QA; o que não pode é o cenário chegar à automação sem camada
+> confirmada.
 
 📖 Regras completas por camada:
 [`../design-casos-teste/references/camadas-e-automacao.md`](../design-casos-teste/references/camadas-e-automacao.md)
