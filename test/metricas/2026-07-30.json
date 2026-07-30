@@ -1,0 +1,16 @@
+{
+  "casos": 0,
+  "aprovados": 0,
+  "rn_declaradas": 0,
+  "rn_cobertas": 0,
+  "cobertura_pct": 0.0,
+  "conversao_pct": 0.0,
+  "nunca_executados": 0,
+  "migracao_pendente": 0,
+  "lacunas_abertas": 0,
+  "bugs_abertos": 0,
+  "bugs_s1": 0,
+  "camadas": {},
+  "rodadas": 0,
+  "data": "2026-07-30"
+}
